@@ -31,13 +31,12 @@ import io.flutter.plugin.common.MethodChannel.Result;
 import io.flutter.plugin.common.PluginRegistry;
 
 public class FlutterOverlayWindowPlugin implements
-        FlutterPlugin, ActivityAware, BasicMessageChannel.MessageHandler, MethodCallHandler,
+        FlutterPlugin, ActivityAware, BasicMessageChannel.MessageHandler<Object>, MethodCallHandler,
         PluginRegistry.ActivityResultListener {
 
     private MethodChannel channel;
     private Context context;
     private Activity mActivity;
-    private BasicMessageChannel<Object> messenger;
     private Result pendingResult;
     final int REQUEST_CODE_FOR_OVERLAY_PERMISSION = 1248;
 
@@ -47,7 +46,7 @@ public class FlutterOverlayWindowPlugin implements
         channel = new MethodChannel(flutterPluginBinding.getBinaryMessenger(), OverlayConstants.CHANNEL_TAG);
         channel.setMethodCallHandler(this);
 
-        messenger = new BasicMessageChannel(flutterPluginBinding.getBinaryMessenger(), OverlayConstants.MESSENGER_TAG,
+        BasicMessageChannel<Object> messenger = new BasicMessageChannel<>(flutterPluginBinding.getBinaryMessenger(), OverlayConstants.MESSENGER_TAG,
                 JSONMessageCodec.INSTANCE);
         messenger.setMessageHandler(this);
 
@@ -58,59 +57,64 @@ public class FlutterOverlayWindowPlugin implements
     @Override
     public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
         pendingResult = result;
-        if (call.method.equals("checkPermission")) {
-            result.success(checkOverlayPermission());
-        } else if (call.method.equals("requestPermission")) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
-                intent.setData(Uri.parse("package:" + mActivity.getPackageName()));
-                mActivity.startActivityForResult(intent, REQUEST_CODE_FOR_OVERLAY_PERMISSION);
-            } else {
-                result.success(true);
-            }
-        } else if (call.method.equals("showOverlay")) {
-            if (!checkOverlayPermission()) {
-                result.error("PERMISSION", "overlay permission is not enabled", null);
+        switch (call.method) {
+            case "checkPermission":
+                result.success(checkOverlayPermission());
+                break;
+            case "requestPermission":
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
+                    intent.setData(Uri.parse("package:" + mActivity.getPackageName()));
+                    mActivity.startActivityForResult(intent, REQUEST_CODE_FOR_OVERLAY_PERMISSION);
+                } else {
+                    result.success(true);
+                }
+                break;
+            case "showOverlay":
+                if (!checkOverlayPermission()) {
+                    result.error("PERMISSION", "overlay permission is not enabled", null);
+                    return;
+                }
+                Integer height = call.argument("height");
+                Integer width = call.argument("width");
+                String alignment = call.argument("alignment");
+                String flag = call.argument("flag");
+                String overlayTitle = call.argument("overlayTitle");
+                String overlayContent = call.argument("overlayContent");
+                String notificationVisibility = call.argument("notificationVisibility");
+                boolean enableDrag = Boolean.TRUE.equals(call.argument("enableDrag"));
+                String positionGravity = call.argument("positionGravity");
+
+                WindowSetup.width = width != null ? width : -1;
+                WindowSetup.height = height != null ? height : -1;
+                WindowSetup.enableDrag = enableDrag;
+                WindowSetup.setGravityFromAlignment(alignment != null ? alignment : "center");
+                WindowSetup.setFlag(flag != null ? flag : "flagNotFocusable");
+                WindowSetup.overlayTitle = overlayTitle;
+                WindowSetup.overlayContent = overlayContent == null ? "" : overlayContent;
+                WindowSetup.positionGravity = positionGravity;
+                WindowSetup.setNotificationVisibility(notificationVisibility);
+
+                final Intent intent = new Intent(context, OverlayService.class);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                context.startService(intent);
+                result.success(null);
+                break;
+            case "isOverlayActive":
+                result.success(OverlayService.isRunning);
                 return;
-            }
-            Integer height = call.argument("height");
-            Integer width = call.argument("width");
-            String alignment = call.argument("alignment");
-            String flag = call.argument("flag");
-            String overlayTitle = call.argument("overlayTitle");
-            String overlayContent = call.argument("overlayContent");
-            String notificationVisibility = call.argument("notificationVisibility");
-            boolean enableDrag = call.argument("enableDrag");
-            String positionGravity = call.argument("positionGravity");
-
-            WindowSetup.width = width != null ? width : -1;
-            WindowSetup.height = height != null ? height : -1;
-            WindowSetup.enableDrag = enableDrag;
-            WindowSetup.setGravityFromAlignment(alignment != null ? alignment : "center");
-            WindowSetup.setFlag(flag != null ? flag : "flagNotFocusable");
-            WindowSetup.overlayTitle = overlayTitle;
-            WindowSetup.overlayContent = overlayContent == null ? "" : overlayContent;
-            WindowSetup.positionGravity = positionGravity;
-            WindowSetup.setNotificationVisibility(notificationVisibility);
-
-            final Intent intent = new Intent(context, OverlayService.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            context.startService(intent);
-            result.success(null);
-        } else if (call.method.equals("isOverlayActive")) {
-            result.success(OverlayService.isRunning);
-            return;
-        } else if (call.method.equals("closeOverlay")) {
-            if (OverlayService.isRunning) {
-                final Intent i = new Intent(context, OverlayService.class);
-                i.putExtra(OverlayService.INTENT_EXTRA_IS_CLOSE_WINDOW, true);
-                context.startService(i);
-                result.success(true);
-            }
-            return;
-        } else {
-            result.notImplemented();
+            case "closeOverlay":
+                if (OverlayService.isRunning) {
+                    final Intent i = new Intent(context, OverlayService.class);
+                    i.putExtra(OverlayService.INTENT_EXTRA_IS_CLOSE_WINDOW, true);
+                    context.startService(i);
+                    result.success(true);
+                }
+                return;
+            default:
+                result.notImplemented();
+                break;
         }
 
     }
